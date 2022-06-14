@@ -43,3 +43,13 @@ Testing.
 The `test` directory contains a Makefile and source code for various tools useful in testing the mtool command.
 It responds to `make all` and `make clean` as per standard. It builds into the `test/bin` directory.
 
+
+
+Licensing.
+
+
+I license all code contained explicitly in this repo under GPLv3.
+Some of the scripts download code covered under the APSLv2.
+
+The GPL code may require APSL code to build.
+
