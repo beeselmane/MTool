@@ -1,8 +1,8 @@
 #import <MTool/MTool.h>
 #import <MTool/MTFatFile.h>
 
-// transferTo:
-#import <NSStream+pipe.h>
+// For - [NSInputStream transferTo:]
+#import <LibObjC/LibObjC.h>
 
 // For struct fat_header, struct fat_arch, etc.
 #import <mach-o/fat.h>

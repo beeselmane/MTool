@@ -11,45 +11,24 @@
 // These are the main pieces of the build toolchain/OS that touch mach-o files.
 // They should collectively provide a full "documentation" of how mach-o files work.
 
-#import <Foundation/Foundation.h>
+#import <LibObjC/LibObjC.h>
+
 #import <MTool/MTFatFile.h>
 #import <MTool/MTMachO.h>
-
-#import <sys/sysctl.h>
-#import <libproc.h>
 
 #import <mach-o/dyld_cache_format.h>
 
 #import "mtool.h"
 
-NSArray *allProcesses(void)
-{
-    size_t count = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-    pid_t *pid_list = calloc(count, sizeof(pid_t));
+@interface MToolCommand : NXCommand
 
-    count = proc_listpids(PROC_ALL_PIDS, 0, pid_list, (int)count);
+- (MTMachO *) findBinaryInProcess:(pid_t)pid withNameSuffix:(NSString *)suffix;
 
-    NSMutableArray<NSDictionary<NSString *, id> *> *array = [[NSMutableArray alloc] initWithCapacity:count];
+@end
 
-    for (size_t i = 0; i < count; i++)
-    {
-        char path[PROC_PIDPATHINFO_MAXSIZE];
-        char name[2 * MAXCOMLEN];
+@implementation MToolCommand
 
-        proc_pidpath(pid_list[i], path, PROC_PIDPATHINFO_MAXSIZE);
-        proc_name(pid_list[i], name, 2 * MAXCOMLEN);
-
-        [array insertObject:@{
-            @"PID"  : @(pid_list[i]),
-            @"Name" : [NSString stringWithUTF8String:name],
-            @"Path" : [NSString stringWithUTF8String:path]
-        } atIndex:i];
-    }
-
-    return [array copy];
-}
-
-MTMachO *MTTFindMainBinaryForPID(pid_t pid, NSString *suffix)
+- (MTMachO *) findBinaryInProcess:(pid_t)pid withNameSuffix:(NSString *)suffix
 {
     NSArray<NSDictionary<NSString *, id> *> *images = [MTMachO imageListFromProcess:pid];
 
@@ -59,102 +38,109 @@ MTMachO *MTTFindMainBinaryForPID(pid_t pid, NSString *suffix)
             continue;
 
         if ([[image objectForKey:@"path"] hasSuffix:suffix])
-        {
-            MTMachO *loadedObject = [MTMachO loadFromImageInProcess:image];
-
-            return loadedObject;
-        }
+            return [MTMachO loadFromImageInProcess:image];
     }
 
     return nil;
 }
 
-int main(int argc, const char *const *argv, const char *const *envp, const char *const *apple)
+- (int) invoke
 {
-    printf("argv:\n");
-    int i;
+    NSLog(@"MTool invoked with state:");
+    NSLog(@"Arguments: %@", [self args]);
+    NSLog(@"Environment: %@", [self environment]);
+    NSLog(@"Apple: %@", [self appleStrings]);
 
-    for (i = 0; i < argc; i++)
-        printf("[%d]: %s\n", i, argv[i]);
+    NSError *error;
 
-    printf("\nenvp:\n");
+    NSArray<NSURL *> *caches = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/System/Library/dyld"] includingPropertiesForKeys:nil options:0 error:&error];
 
-    for (i = 0; envp[i]; i++)
-        printf("[%d]: %s\n", i, envp[i]);
-
-    printf("\napple:\n");
-
-    for (i = 0; apple[i]; i++)
-        printf("[%d]: %s\n", i, apple[i]);
-
-    @autoreleasepool
+    if (!caches)
     {
-        NSError *error;
+        NSLog(@"Couldn't find dyld caches!");
 
-        NSArray<NSURL *> *caches = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:[NSURL fileURLWithPath:@"/System/Library/dyld"] includingPropertiesForKeys:nil options:0 error:&error];
-
-        if (!caches)
-        {
-            NSLog(@"Couldn't find dyld caches!");
-
-            return 1;
-        }
-
-        NSUInteger bufferSize = getpagesize();
-        UInt8 *buffer = malloc(bufferSize);
-
-        if (!buffer)
-            return 2;
-
-        for (NSURL *cacheFile in caches)
-        {
-            if (![[cacheFile path] containsString:@"arm64"])
-                continue;
-
-            if ([[cacheFile path] hasSuffix:@".map"])
-                continue;
-
-            NSInputStream *stream = [NSInputStream inputStreamWithURL:cacheFile];
-            [stream open];
-
-            NSInteger bytesRead = [stream read:buffer maxLength:bufferSize];
-            [stream close];
-
-            if (bytesRead == -1)
-            {
-                NSLog(@"Failed to read header for cache '%@'! (%@)", cacheFile, [stream streamError]);
-
-                continue;
-            }
-
-            if (bytesRead < sizeof(struct dyld_cache_header))
-            {
-                NSLog(@"Failed to read header for cache '%@'!", cacheFile);
-
-                continue;
-            }
-
-            struct dyld_cache_header *header = (struct dyld_cache_header *)buffer;
-
-            NSLog(@"Magic: %s, cache: %@", header->magic, cacheFile);
-        }
-
-        MTCLipoCommand *lipo = [MTCLipoCommand commandWithArguments:nil];
-        [lipo setInputFiles:@[@{
-            @"name" : @"/bin/bash",
-            @"url"  : [NSURL URLWithString:@"file:///bin/bash"]
-        }, @{
-            @"name" : @"/usr/lib/dyld",
-            @"url"  : [NSURL URLWithString:@"file:///usr/lib/dyld"]
-        }]];
-
-        [lipo detailedInfo];
-
-        [MTSharedCache currentSharedCache];
-
-        MTTFindMainBinaryForPID(85129, @"pid");
-        MTTFindMainBinaryForPID(98685, @"x86_64");
+        return 1;
     }
 
+    NSUInteger bufferSize = getpagesize();
+    UInt8 *buffer = malloc(bufferSize);
+
+    if (!buffer)
+        return 2;
+
+    for (NSURL *cacheFile in caches)
+    {
+        if (![[cacheFile path] containsString:@"arm64"])
+            continue;
+
+        if ([[cacheFile path] hasSuffix:@".map"])
+            continue;
+
+        NSInputStream *stream = [NSInputStream inputStreamWithURL:cacheFile];
+        [stream open];
+
+        NSInteger bytesRead = [stream read:buffer maxLength:bufferSize];
+        [stream close];
+
+        if (bytesRead == -1)
+        {
+            NSLog(@"Failed to read header for cache '%@'! (%@)", cacheFile, [stream streamError]);
+
+            continue;
+        }
+
+        if (bytesRead < sizeof(struct dyld_cache_header))
+        {
+            NSLog(@"Failed to read header for cache '%@'!", cacheFile);
+
+            continue;
+        }
+
+        struct dyld_cache_header *header = (struct dyld_cache_header *)buffer;
+
+        NSLog(@"Magic: %s, cache: %@", header->magic, cacheFile);
+    }
+
+    MTCLipoCommand *lipo = [MTCLipoCommand commandWithArguments:nil];
+    [lipo setInputFiles:@[@{
+        @"name" : @"/bin/bash",
+        @"url"  : [NSURL URLWithString:@"file:///bin/bash"]
+    }, @{
+        @"name" : @"/usr/lib/dyld",
+        @"url"  : [NSURL URLWithString:@"file:///usr/lib/dyld"]
+    }]];
+
+    [lipo detailedInfo];
+
+    [MTSharedCache currentSharedCache];
+
+    // Unfortunately, Apple is no fun and forbids task_for_pid() for system processes under SIP.
+    // I mean fine, *technically* this is more secure, but it's also not very *fun*...
+    [self findBinaryInProcess:1 withNameSuffix:@"launchd"];
+
+    MTMachineType type, subtype;
+
+    if (!MTMachinePairGetCurrent(&type, &subtype))
+    {
+        NSLog(@"Failed to get current machine pair!");
+
+        return 1;
+    }
+
+    // We can use this to run some test tooling for our native arch
+    NSString *currentArch = MTMachinePairToArchName(type, subtype);
+    NSLog(@"Current CPU arch: %@ (%@, %@)", currentArch, MTMachineTypeToString(type), MTMachinePairSubtypeName(type, subtype));
+
+    // This isn't nearly as cool since everything is already in our address space...
+    [self findBinaryInProcess:getpid() withNameSuffix:@"mtool"];
+    [self findBinaryInProcess:getpid() withNameSuffix:@"libSystem.B.dylib"];
+
     return 0;
+}
+
+@end
+
+int main(int argc, char *const *argv, char *const *envp, char *const *apple)
+{
+    return NXCommandMain(NSStringFromClass([MToolCommand class]), argc, argv, apple);
 }

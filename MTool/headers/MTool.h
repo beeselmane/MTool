@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 
 #import <MTool/MTType.h>
+#import <MTool/MTMappedRegion.h>
 #import <MTool/MTSharedCache.h>
 #import <MTool/MTFatFile.h>
 #import <MTool/MTProcess.h>

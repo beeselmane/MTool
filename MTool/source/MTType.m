@@ -1,6 +1,52 @@
 #import <MTool/MTool.h>
 #import <MTool/MTType.h>
 
+// For getting current machine pair
+#import <sys/sysctl.h>
+
+bool MTMachinePairGetCurrent(MTMachineType *type, MTMachineSubtype *subtype)
+{
+    if (!type && !subtype)
+    {
+        return false;
+    }
+
+    // There are sysctls for this. Namely, hw.cputype and hw.cpusubtype. These can only be done by name
+    size_t sysctl_size = sizeof(int32_t);
+    int32_t sysctl_subtype;
+    int32_t sysctl_type;
+
+    if (type)
+    {
+        if (sysctlbyname("hw.cputype", &sysctl_type, &sysctl_size, NULL, 0))
+        {
+            NSLog(@"Failed to get 'hw.cputype' from sysctl!");
+
+            return false;
+        }
+
+        // Just in case, even though the man page explicitly says this is the returned size.
+        sysctl_size = sizeof(int32_t);
+
+        // Save this here
+        (*type) = sysctl_type;
+    }
+
+    if (subtype)
+    {
+        if (sysctlbyname("hw.cpusubtype", &sysctl_subtype, &sysctl_size, NULL, 0))
+        {
+            NSLog(@"Failed to get 'hw.cpusubtype' from sysctl!");
+
+            return false;
+        }
+
+        (*subtype) = sysctl_subtype;
+    }
+
+    return true;
+}
+
 // I don't support some of the more obscure things found here in cctools...
 NSString *MTMachinePairToArchName(MTMachineType type, MTMachineSubtype _subtype)
 {
@@ -217,4 +263,89 @@ NSString *MTMachinePairGetCapabilitiesString(MTMachineType type, MTMachineSubtyp
     }
 
     return [NSString stringWithFormat:@"0x%x", (unsigned int)(capabilities >> 24)];
+}
+
+NSString *MTMachOImageTypeName(MTMachOImageType type)
+{
+    switch (type)
+    {
+        case kMTMachOImageTypeObject:               return @"MH_OBJECT";
+        case kMTMachOImageTypeExecutable:           return @"MH_EXECUTE";
+        case kMTMachOImageTypeFVMLibrary:           return @"MH_FVMLIB";
+        case kMTMachOImageTypeCore:                 return @"MH_CORE";
+        case kMTMachOImageTypePreloadedExecutable:  return @"MH_PRELOAD";
+        case kMTMachOImageTypeDynamicLibrary:       return @"MH_DYLIB";
+        case kMTMachOImageTypeDynamicLinker:        return @"MH_DYLINKER";
+        case kMTMachOImageTypeBundle:               return @"MH_BUNDLE";
+        case kMTMachOImageTypeLibraryStub:          return @"MH_DYLIB_STUB";
+        case kMTMachOImageTypeDsym:                 return @"MH_DSYM";
+        case kMTMachOImageTypeKext:                 return @"MH_KEXT_BUNDLE";
+        case kMTMachOImageTypeFileSet:              return @"MH_FILESET";
+        default:                                    return @"MH_UNKNOWN";
+    }
+}
+
+NSString *MTMachOLoadCommandName(uint32_t command)
+{
+    switch (command)
+    {
+        #define case(s) case s: return @#s
+        case(LC_SEGMENT);
+        case(LC_SYMTAB);
+        case(LC_SYMSEG);
+        case(LC_THREAD);
+        case(LC_UNIXTHREAD);
+        case(LC_LOADFVMLIB);
+        case(LC_IDFVMLIB);
+        case(LC_IDENT);
+        case(LC_FVMFILE);
+        case(LC_PREPAGE);
+        case(LC_DYSYMTAB);
+        case(LC_LOAD_DYLIB);
+        case(LC_ID_DYLIB);
+        case(LC_LOAD_DYLINKER);
+        case(LC_ID_DYLINKER);
+        case(LC_PREBOUND_DYLIB);
+        case(LC_ROUTINES);
+        case(LC_SUB_FRAMEWORK);
+        case(LC_SUB_UMBRELLA);
+        case(LC_SUB_CLIENT);
+        case(LC_SUB_LIBRARY);
+        case(LC_TWOLEVEL_HINTS);
+        case(LC_PREBIND_CKSUM);
+        case(LC_LOAD_WEAK_DYLIB);
+        case(LC_SEGMENT_64);
+        case(LC_ROUTINES_64);
+        case(LC_UUID);
+        case(LC_RPATH);
+        case(LC_CODE_SIGNATURE);
+        case(LC_SEGMENT_SPLIT_INFO);
+        case(LC_REEXPORT_DYLIB);
+        case(LC_LAZY_LOAD_DYLIB);
+        case(LC_ENCRYPTION_INFO);
+        case(LC_DYLD_INFO);
+        case(LC_DYLD_INFO_ONLY);
+        case(LC_LOAD_UPWARD_DYLIB);
+        case(LC_VERSION_MIN_MACOSX);
+        case(LC_VERSION_MIN_IPHONEOS);
+        case(LC_FUNCTION_STARTS);
+        case(LC_DYLD_ENVIRONMENT);
+        case(LC_MAIN);
+        case(LC_DATA_IN_CODE);
+        case(LC_SOURCE_VERSION);
+        case(LC_DYLIB_CODE_SIGN_DRS);
+        case(LC_ENCRYPTION_INFO_64);
+        case(LC_LINKER_OPTION);
+        case(LC_LINKER_OPTIMIZATION_HINT);
+        case(LC_VERSION_MIN_TVOS);
+        case(LC_VERSION_MIN_WATCHOS);
+        case(LC_NOTE);
+        case(LC_BUILD_VERSION);
+        case(LC_DYLD_EXPORTS_TRIE);
+        case(LC_DYLD_CHAINED_FIXUPS);
+        case(LC_FILESET_ENTRY);
+        #undef case
+
+        default: return @"LC_UNKNOWN";
+    }
 }

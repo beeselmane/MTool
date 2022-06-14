@@ -8,6 +8,26 @@
 #define MTSwapToBigEndian   htonl
 #define MTSwapToHostEndian  ntohl
 
+// These are taken from mach-o/loader.h
+// We re-export them with some new names + functions
+enum {
+    kMTMachOImageTypeUnknown                = -1,
+    kMTMachOImageTypeObject                 = MH_OBJECT,
+    kMTMachOImageTypeExecutable             = MH_EXECUTE,
+    kMTMachOImageTypeFVMLibrary             = MH_FVMLIB,
+    kMTMachOImageTypeCore                   = MH_CORE,
+    kMTMachOImageTypePreloadedExecutable    = MH_PRELOAD,
+    kMTMachOImageTypeDynamicLibrary         = MH_DYLIB,
+    kMTMachOImageTypeDynamicLinker          = MH_DYLINKER,
+    kMTMachOImageTypeBundle                 = MH_BUNDLE,
+    kMTMachOImageTypeLibraryStub            = MH_DYLIB_STUB,
+    kMTMachOImageTypeDsym                   = MH_DSYM,
+    kMTMachOImageTypeKext                   = MH_KEXT_BUNDLE,
+    kMTMachOImageTypeFileSet                = MH_FILESET
+};
+
+typedef uint32_t MTMachOImageType;
+
 // These are taken from mach/machine.h
 // We basically just re-export them with more objective-c style names.
 // Note that in reality x86_64 and aarch64 are the only relevent types here.
@@ -59,6 +79,9 @@ typedef cpu_subtype_t MTMachineSubtype;
 
 typedef cpu_type_t MTMachineType;
 
+// Get the current cpytype/subtype combo. Return false on failure.
+extern bool MTMachinePairGetCurrent(MTMachineType *type, MTMachineSubtype *subtype);
+
 // Methods for getting various information as strings
 extern NSString *MTMachinePairToArchName(MTMachineType type, MTMachineSubtype subtype);
 
@@ -68,3 +91,8 @@ extern NSString *MTMachineTypeToString(MTMachineType type);
 
 // Some subtypes expose "capability" information. This includes features such as pointer authentcation.
 extern NSString *MTMachinePairGetCapabilitiesString(MTMachineType type, MTMachineSubtype subtype);
+
+// Get name of Mach-O type
+extern NSString *MTMachOImageTypeName(MTMachOImageType type);
+
+extern NSString *MTMachOLoadCommandName(uint32_t command);

@@ -8,54 +8,6 @@
 #import <mach/machine.h>
 #import <mach/vm_map.h>
 
-@interface MTMappedRegion : NSObject
-
-@property (nonatomic) vm_address_t base;
-
-@property (nonatomic) vm_size_t size;
-
-+ (instancetype) regionFromTask:(mach_port_name_t)port containing:(vm_address_t)address;
-
-+ (instancetype) regionFromProcess:(pid_t)pid containing:(vm_address_t)address;
-
-+ (instancetype) regionInMappedFile:(void *)base from:(off_t)offset size:(size_t)size;
-
-@end
-
-@implementation MTMappedRegion
-
-@synthesize base = _base;
-@synthesize size = _size;
-
-//- (instancetype) regionFromTask:(mach_port_name_t)port containing:(vm_address_t)address
-
-+ (instancetype) regionFromProcess:(pid_t)pid containing:(vm_address_t)address
-{
-    mach_port_name_t task;
-    kern_return_t result;
-
-    if ((result = task_for_pid(mach_task_self(), pid, &task)) != KERN_SUCCESS)
-    {
-        NSLog(@"task_for_pid: %s", mach_error_string(result));
-
-        return nil;
-    }
-
-    return [self regionFromTask:task containing:address];
-}
-
-//- (instancetype) regionInMappedFile:(void *)base from:(off_t)offset size:(size_t)size;
-
-- (void) dealloc
-{
-    kern_return_t result = mach_vm_deallocate(mach_task_self(), [self base], [self size]);
-
-    if (result != KERN_SUCCESS)
-        NSLog(@"mach_vm_deallocate: %s", mach_error_string(result));
-}
-
-@end
-
 @implementation MTMachO
 
 + (NSArray<NSDictionary<NSString *, id> *> *) imageListFromProcess:(pid_t)process
@@ -154,58 +106,28 @@
         NSLog(@"Loading image '%@' from pid ??? (task %u) from address 0x%08llX...", path, targetTask, target);
     }
 
-    // Just in case...
-    static_assert(VM_REGION_BASIC_INFO_COUNT_64 < sizeof(struct vm_region_basic_info_64), "vm_region structure size mismatch!!");
+    // Map the target header into our task's address space
+    MTMappedRegion *headerRegion = [MTMappedRegion regionFromTask:targetTask containing:target];
 
-    // Get vm information for the location of the header map
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    struct vm_region_basic_info_64 regionInfo;
-    mach_vm_address_t regionStart = target;
-    mach_vm_size_t regionSize;
-    mach_port_t object;
-
-    if ((result = mach_vm_region(targetTask, &regionStart, &regionSize, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&regionInfo, &count, &object)) != KERN_SUCCESS)
-    {
-        NSLog(@"mach_vm_region: %s", mach_error_string(result));
-
+    if (!headerRegion)
         return nil;
-    }
 
     // Make sure we get at least a mach-o image header.
-    if (regionSize < sizeof(struct mach_header_64))
+    if ([headerRegion size] < sizeof(struct mach_header_64))
     {
         NSLog(@"Provided memory region too small for image header!");
 
         return nil;
     }
 
-    NSLog(@"Mach-O header located in region 0x%08llX-0x%08llX (%llu)", regionStart, regionStart + regionSize, regionSize);
+    NSLog(@"Mach-O header located in %@", headerRegion);
 
     // Figure out the offset of the Mach-O header in the mapped region.
     // Note: I do think XNU enforces this to be 0, but we can handle if not.
-    mach_vm_offset_t headerOffset = target - regionStart;
-
-    // Remap the header and load commands into our segment.
-    mach_vm_address_t headerMap = 0;
-
-    // Use the same protection as in the target task (+ ensure readable if not already)
-    vm_prot_t protectionCurrent = regionInfo.protection | VM_PROT_READ;
-    vm_prot_t protectionMax = regionInfo.max_protection | VM_PROT_READ;
-
-    // VM_FLAGS_RETURN_DATA_ADDR tells the kernel to give us the address of mapped data
-    //   instead of the base page offset (needs to be shifted by PAGE_SHIFT)
-    int flags = VM_FLAGS_ANYWHERE | VM_FLAGS_RETURN_DATA_ADDR;
-
-    // Actually remap the data
-    if ((result = mach_vm_remap_new(mach_task_self(), &headerMap, regionSize, 0, flags, targetTask, regionStart, false, &protectionCurrent, &protectionMax, VM_INHERIT_SHARE)))
-    {
-        NSLog(@"mach_vm_remap_new: %s", mach_error_string(result));
-
-        return nil;
-    }
+    mach_vm_offset_t headerOffset = target - [headerRegion sourceBase];
 
     // This is now in our task's address space
-    vm_address_t headerBase = headerMap + headerOffset;
+    vm_address_t headerBase = [headerRegion base] + headerOffset;
     struct mach_header_64 *header = (struct mach_header_64 *)headerBase;
 
     // Make sure we have a valid Mach-O header before doing anything else.
@@ -214,9 +136,6 @@
     if (header->magic != MH_MAGIC_64)
     {
         NSLog(@"Mach-O header magic value malformed!");
-
-        if ((result = mach_vm_deallocate(mach_task_self(), headerMap, regionSize)))
-            NSLog(@"mach_vm_deallocate: %s", mach_error_string(result));
 
         return nil;
     }
@@ -233,9 +152,6 @@
     {
         // We can't handle 32-bit in process images for now.
         NSLog(@"Mach-O image CPU_ARCH_ABI64 unset!");
-
-        if ((result = mach_vm_deallocate(mach_task_self(), headerMap, regionSize)))
-            NSLog(@"mach_vm_deallocate: %s", mach_error_string(result));
 
         return nil;
     }
@@ -283,6 +199,14 @@
         } break;
     }
 
+    if (isCached)
+    {
+        NSLog(@"Found cached image while laoding from process!");
+
+        // We can't handle this now. The load commands don't appear like normal...
+        return nil;
+    }
+
     // The load commands need to fall in the same map we just grabbed, otherwise we
     //   wouldn't be able to locate them. Technically, I do think the kernel would be
     //   able to load a Mach-O image with load commands/header in various segments,
@@ -291,12 +215,9 @@
     // After checking mach_loader.c in XNU source, it appears the kernel only ensures
     //   there exists some segment mapping the header. I don't know if this is really
     //   enough, to ensure we can process all valid Mach-O files, but oh well...
-    if (sizeof(struct mach_header_64) + header->sizeofcmds > (regionSize - headerOffset))
+    if (sizeof(struct mach_header_64) + header->sizeofcmds > ([headerRegion size] - headerOffset))
     {
         NSLog(@"Mapped region is too small for Mach-O header and load commands!");
-
-        if ((result = mach_vm_deallocate(mach_task_self(), headerMap, regionSize)))
-            NSLog(@"mach_vm_deallocate: %s", mach_error_string(result));
 
         return nil;
     }
@@ -313,6 +234,7 @@
     //   memory. I've read the algorithm used in bsd/mach_loader.c and reverse it here.
 
     BOOL foundHeaderSegment = NO;
+    uint32_t segmentCount = 1;
     int64_t slide = 0;
 
     for (int pass = 0; pass < 2; pass++)
@@ -336,21 +258,15 @@
             {
                 NSLog(@"Found load commands past end of expected section!");
 
-                if ((result = mach_vm_deallocate(mach_task_self(), headerMap, regionSize)))
-                    NSLog(@"mach_vm_deallocate: %s", mach_error_string(result));
-
                 return nil;
             }
 
-            struct load_command *loadCommand = (struct load_command *)(headerBase + offset);
+            struct load_command *loadCommand = (struct load_command *)([headerRegion base] + offset);
             offset += loadCommand->cmdsize;
 
             if (offset > commandsEnd || loadCommand->cmdsize < sizeof(struct load_command))
             {
                 NSLog(@"Found command with too small/large size in image!");
-
-                if ((result = mach_vm_deallocate(mach_task_self(), headerMap, regionSize)))
-                    NSLog(@"mach_vm_deallocate: %s", mach_error_string(result));
 
                 return nil;
             }
@@ -369,8 +285,14 @@
                     struct segment_command_64 *segment = (struct segment_command_64 *)loadCommand;
 
                     if (pass == 0) {
-                        if (segment->fileoff == 0 && segment->filesize > 0)
-                        {
+                        if (segment->fileoff == 0 && segment->filesize > 0) {
+                            if (foundHeaderSegment)
+                            {
+                                NSLog(@"Found two segments mapping image header!");
+
+                                return nil;
+                            }
+
                             // Slide is the offset from the expected vmaddr in the target task's address space.
                             slide = target - segment->vmaddr;
 
@@ -378,7 +300,8 @@
                             NSLog(@"Calculated image slide: 0x%08llX", slide);
 
                             foundHeaderSegment = YES;
-                            continue;
+                        } else if (segment->filesize > 0) {
+                            segmentCount++;
                         }
                     } else { // pass == 1
                         if (segment->filesize > 0 && segment->fileoff != 0)
@@ -386,21 +309,27 @@
                             vm_address_t slidBase = segment->vmaddr + slide;
 
                             NSLog(@"Found segment '%.16s'", segment->segname);
-                            NSLog(@"Should be mapped at 0x%08llX --> 0x%08llX", segment->vmaddr, slidBase);
+                            NSLog(@"Should be mapped at 0x%08llX --> 0x%08lX", segment->vmaddr, slidBase);
                         }
                     }
                 } break;
-                default: {
-                    NSLog(@"Found load command of type '0x%08X'", loadCommand->cmd);
-                } break;
+                // Skip non-segment load commands
+                default:
+                    NSLog(@"Found load command: %@", MTMachOLoadCommandName(loadCommand->cmd));
+                    break;
             }
         }
 
-        if (pass == 0 && !foundHeaderSegment)
+        if (pass == 0)
         {
-            NSLog(@"Didn't find load command mapping header segment in image!");
+            if (!foundHeaderSegment)
+            {
+                NSLog(@"Didn't find load command mapping header segment in image!");
 
-            return nil;
+                return nil;
+            }
+
+            NSLog(@"Found %u segments in image", segmentCount);
         }
     }
 

@@ -12,22 +12,25 @@ extern int __shared_region_check_np(uint64_t *startaddress);
 
 + (instancetype) currentSharedCache
 {
+    uint64_t startAddress;
+    int status;
+
+    if ((status = __shared_region_check_np(&startAddress)))
+    {
+        NSLog(@"No shared cache found! (status=%d)", status);
+
+        return nil;
+    }
+
+    struct dyld_cache_header *header = (struct dyld_cache_header *)startAddress;
+
+    //
+
     MTSharedCache *cache = [[MTSharedCache alloc] init];
 
     if (cache)
     {
-        uint64_t startAddress;
-        int status;
-
-        if ((status = __shared_region_check_np(&startAddress)))
-        {
-            NSLog(@"No shared cache found! (status=%d)", status);
-
-            return nil;
-        }
-
-        if (![cache readFromMemory:(void *)startAddress isLoaded:YES])
-            return nil;
+        //
     }
 
     return cache;

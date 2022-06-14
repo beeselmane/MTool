@@ -1,0 +1,45 @@
+Mach-O Tool (MTool)
+===================
+
+
+About.
+
+
+This is a project for analysing Mach-O images, used on Apple's Operating System family, stemming from the Mach kernel.
+
+Most of this is focused on modern binaries used in Apple's systems.
+
+Additionally, we want to be able to handle ex. dyld shared caches, fat binaries, etc.
+
+
+
+Building.
+
+
+First time:
+
+Clone this repository.
+
+From the root of this repository, run `sh ref/clone.sh`. This will checkout various open source components of Apple's OS family into the `ref/` directory.
+
+Open the mtool.xcodeproj project in Xcode.
+
+Build the `extract_external_headers` target. This will process and copy various public and private headers out of the open source code from Apple.
+
+
+Subsequently:
+
+Simply build whichever target you wish. The LibObjC framework is a utility framework used by both the MTool framework and the command line tool.
+The source for the MTool framework is compiled as a static library which is linked with the mtool command frontend and then linked with the version into to build the dynamic library.
+
+The dynamic framework exists only to export headers and allow integration into other projects.
+The command line tool is for end user access to the interfaces provided therein.
+
+
+
+Testing.
+
+
+The `test` directory contains a Makefile and source code for various tools useful in testing the mtool command.
+It responds to `make all` and `make clean` as per standard. It builds into the `test/bin` directory.
+

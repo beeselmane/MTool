@@ -1,0 +1,20 @@
+**/.DS_Store
+**/xcuserdata
+
+# Built from extract_external_headers target in MTool.xcodeproj
+apple_headers/private/**/*.h
+apple_headers/private/**/*.inc
+apple_headers/public/**/*.h
+
+# Built from test/Makefile
+test/bin
+
+# Built from ref/Makefile
+ref/AvailabilityVersions
+ref/cctools
+ref/dyld
+ref/ld64
+ref/llvm-project
+ref/objc4
+ref/xnu
+
